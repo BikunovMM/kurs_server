@@ -1,0 +1,277 @@
+#ifndef KURS_SERVER_HPP
+#define KURS_SERVER_HPP
+
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
+#include <memory>
+#include <chrono>
+#include <ctime>
+
+#include <boost/asio.hpp>
+#include <boost/json/src.hpp>
+#include <libpq-fe.h>
+
+namespace ip     = boost::asio::ip;
+namespace asio   = boost::asio;
+using     tcp    = boost::asio::ip::tcp;
+
+constexpr int   PORT = 8765;
+//char DB_CONN_INFO[75];
+constexpr char *SQL_SELECT_USERS    = (char*)"SELECT * FOM Пользователи;";
+constexpr char *SQL_SELECT_USER_REQ = (char*)"SELECT * FROM Пользователи "
+                                             "WHERE Логин = $1::VARCHAR(20) "
+                                             "AND Пароль = $2::VARCHAR(20);";
+constexpr char *SQL_INSERT_FILES_GET_IDS =  (char*)"INSERT INTO Файлы (НазваниеФайла) "
+                                                   "VALUES ($1::VARCHAR(20)), "
+                                                   "($2::VARCHAR(20)) "
+                                                   "RETURNING idФайла;";
+constexpr char *SQL_SELECT_FILES_FMTS_IDS = (char*)"SELECT idФормата FROM ФорматыФайлов "
+                                               "WHERE Название = $1::VARCHAR(20) OR"
+                                                "Название = $2::VARCHAR(20);";
+constexpr char *SQL_INSERT_INTO_CONVERT_HISTORY = (char*)   
+    "WITH infile AS ("
+        "INSERT INTO \"Файлы\" (\"idФайла\", \"НазваниеФайла\") "
+        "VALUES ((SELECT MAX(\"idФайла\") + 1 FROM \"Файлы\"), $1) "
+        "RETURNING \"idФайла\""
+    "), "
+    "outfile AS ("
+        "INSERT INTO \"Файлы\" (\"idФайла\", \"НазваниеФайла\") "
+        "SELECT "
+        "i.\"idФайла\" + 1, $2 "
+        "FROM infile i "
+        //"VALUES ($2) "
+        "RETURNING \"idФайла\""
+    "), "
+    "infile_fmt AS ("
+        "SELECT \"idФормата\" FROM \"ФорматыФайлов\" "
+        "WHERE \"Название\" = $3 "
+        "LIMIT 1"
+    "), "
+    "outfile_fmt AS ("
+        "SELECT \"idФормата\" FROM \"ФорматыФайлов\" "
+        "WHERE \"Название\" = $4 "
+        "LIMIT 1"
+    "), "
+    "convert AS ("
+        "INSERT INTO \"Конвертации\" (\"idВходногоФайла\", \"idВыходногоФайла\", "
+        "\"idВходногоФормата\", \"idВыходногоФормата\", \"ДатаКонвертации\") "
+        "SELECT "
+            "i.\"idФайла\", "
+            "o.\"idФайла\", "
+            "ifmt.\"idФормата\", "
+            "ofmt.\"idФормата\", "
+            "$5 "
+        "FROM infile i, outfile o, infile_fmt ifmt, outfile_fmt ofmt "
+        "RETURNING \"idКонвертации\""
+    ")"
+    "INSERT INTO \"ИсторияКонвертаций\" (\"idПользователя\", \"idКонвертации\") "
+    "SELECT $6, \"idКонвертации\" "
+    "FROM convert;";
+
+constexpr char *SQL_ADDITIVNIY_CRITERIY = (char*)
+"SELECT DISTINCT " 
+        //"П.\"idПользователя\", "   
+        "$1::BIGINT, "
+        "СуммаКонвертаций.\"СуммаКонвертаций\" * 1 " 
+        "+ ДниСПоследКонверт.\"ДниСПоследКонверт\" * (-0.5) "   
+        "+ ЧастотаКонвертаций.\"ЧастотаКонвертаций\" * 1 " 
+        "+ ДниСРегистрации.\"ДниСРегистрации\" * 1 "   
+        "+ ДлинаФормата.\"СамыйИспользуемыйФормат\" * 0 AS \"АддКрит\", "
+        "SUM(СуммаКонвертаций.\"СуммаКонвертаций\" * 1 " 
+        "+ ДниСПоследКонверт.\"ДниСПоследКонверт\" * (-0.5) "   
+        "+ ЧастотаКонвертаций.\"ЧастотаКонвертаций\" * 1 " 
+        "+ ДниСРегистрации.\"ДниСРегистрации\" * 1 "   
+        "+ ДлинаФормата.\"СамыйИспользуемыйФормат\" * 0) AS \"СуммаАддКрит\" " 
+    "FROM " \
+        "\"Пользователи\" AS П "
+    "LEFT JOIN ("  
+        "SELECT DISTINCT " 
+            "П.\"idПользователя\", "   
+            "EXTRACT(DAY FROM AGE(П.\"ДатаРегистрации\")) * 1.0 / "
+            "GREATEST((SELECT MAX(EXTRACT(DAY FROM AGE(\"ДатаРегистрации\"))) " 
+             "FROM \"Пользователи\"), 1) AS \"ДниСРегистрации\" " 
+        "FROM \"Пользователи\" AS П "   
+        "GROUP BY П.\"idПользователя\", П.\"ДатаРегистрации\" " 
+    ") AS ДниСРегистрации ON П.\"idПользователя\" = ДниСРегистрации.\"idПользователя\" "
+    "LEFT JOIN ( "  
+        "SELECT DISTINCT " 
+            "П.\"idПользователя\", "   
+            "COALESCE(EXTRACT(DAY FROM AGE(MAX(К.\"ДатаКонвертации\"))), 0) * 1.0 / "  
+            "GREATEST((SELECT MAX(Д.\"КрайняяДата\") "   
+             "FROM ( "  
+                 "SELECT " 
+                     "П.\"idПользователя\", "  
+                     "COALESCE(EXTRACT(DAY FROM AGE(MAX(К.\"ДатаКонвертации\"))), 0) AS \"КрайняяДата\" "   
+                 "FROM \"Конвертации\" AS К, \"Пользователи\" AS П, \"ИсторияКонвертаций\" AS И "   
+                 "WHERE П.\"idПользователя\" = И.\"idПользователя\" AND И.\"idКонвертации\" = К.\"idКонвертации\" " 
+                 "GROUP BY П.\"idПользователя\" "   
+             ") AS Д "  
+            "), 1) AS \"ДниСПоследКонверт\" " 
+        "FROM \"Пользователи\" AS П "  
+        "LEFT JOIN \"ИсторияКонвертаций\" AS И ON П.\"idПользователя\" = И.\"idПользователя\" " 
+        "LEFT JOIN \"Конвертации\" AS К ON И.\"idКонвертации\" = К.\"idКонвертации\" "  
+        "GROUP BY П.\"idПользователя\" "
+    ") AS ДниСПоследКонверт ON П.\"idПользователя\" = ДниСПоследКонверт.\"idПользователя\" "
+    "LEFT JOIN ( "  
+        "SELECT "   
+            "ДатыВсехКонвертаций.\"idПользователя\", "
+            "COALESCE(AVG(EXTRACT(DAY FROM (ДатыВсехКонвертаций.\"ДатаКонвертации\"::timestamp - ПорядковыйНомерМинус1.\"ДатаКонвертации\"::timestamp))), 0) /  "
+            "GREATEST((SELECT MAX(С.\"СредКонв\") " 
+             "FROM ( "  
+                 "SELECT " 
+                     "COALESCE(AVG(EXTRACT(DAY FROM (ДатыВсехКонвертаций.\"ДатаКонвертации\"::timestamp - ПорядковыйНомерМинус1.\"ДатаКонвертации\"::timestamp))), 0) AS \"СредКонв\" "   
+                 "FROM ( "  
+                     "SELECT " 
+                         "И.\"idПользователя\", "  
+                         "К.\"ДатаКонвертации\", " 
+                         "ROW_NUMBER() OVER (ORDER BY И.\"idПользователя\", К.\"ДатаКонвертации\") AS \"ПорядковыйНомер\" " 
+                     "FROM \"ИсторияКонвертаций\" AS И "   
+                     "INNER JOIN \"Конвертации\" AS К ON И.\"idКонвертации\" = К.\"idКонвертации\" "   
+                 ") AS ДатыВсехКонвертаций "
+                 "LEFT OUTER JOIN ( "   
+                     "SELECT " 
+                         "\"idПользователя\", "
+                         "\"ДатаКонвертации\", "   
+                         "\"ПорядковыйНомер\" - 1 AS \"ПорядковыйНомерМинус1\" "   
+                     "FROM ( "  
+                         "SELECT " 
+                             "И.\"idПользователя\", "  
+                             "К.\"ДатаКонвертации\", " 
+                             "ROW_NUMBER() OVER (ORDER BY И.\"idПользователя\", К.\"ДатаКонвертации\") AS \"ПорядковыйНомер\" " 
+                         "FROM \"ИсторияКонвертаций\" AS И "   
+                         "INNER JOIN \"Конвертации\" AS К ON И.\"idКонвертации\" = К.\"idКонвертации\" "   
+                     ") AS ДатыВсехКонвертаций "
+                 ") AS ПорядковыйНомерМинус1 " 
+                 "ON ДатыВсехКонвертаций.\"idПользователя\" = ПорядковыйНомерМинус1.\"idПользователя\" "   
+                    "AND ДатыВсехКонвертаций.\"ПорядковыйНомер\" = ПорядковыйНомерМинус1.\"ПорядковыйНомерМинус1\" "
+                 "GROUP BY ДатыВсехКонвертаций.\"idПользователя\" " 
+             ") С " 
+            "), 1) AS \"ЧастотаКонвертаций\" " 
+        "FROM ( "   
+            "SELECT "  
+                "И.\"idПользователя\", "   
+                "К.\"ДатаКонвертации\", "  
+                "ROW_NUMBER() OVER (ORDER BY И.\"idПользователя\", К.\"ДатаКонвертации\") AS \"ПорядковыйНомер\" "  
+            "FROM \"ИсторияКонвертаций\" AS И "
+            "INNER JOIN \"Конвертации\" AS К ON И.\"idКонвертации\" = К.\"idКонвертации\" "
+        ") AS ДатыВсехКонвертаций " 
+        "LEFT OUTER JOIN ( "
+            "SELECT "  
+                "\"idПользователя\", " 
+                "\"ДатаКонвертации\", "
+                "\"ПорядковыйНомер\" - 1 AS \"ПорядковыйНомерМинус1\" "
+            "FROM ( "   
+                "SELECT "  
+                    "И.\"idПользователя\", "   
+                    "К.\"ДатаКонвертации\", "  
+                    "ROW_NUMBER() OVER (ORDER BY И.\"idПользователя\", К.\"ДатаКонвертации\") AS \"ПорядковыйНомер\" "  
+                "FROM \"ИсторияКонвертаций\" AS И "
+                "INNER JOIN \"Конвертации\" AS К ON И.\"idКонвертации\" = К.\"idКонвертации\" "
+            ") AS ДатыВсехКонвертаций " 
+        ") AS ПорядковыйНомерМинус1 "  
+        "ON ДатыВсехКонвертаций.\"idПользователя\" = ПорядковыйНомерМинус1.\"idПользователя\" "
+            "AND ДатыВсехКонвертаций.\"ПорядковыйНомер\" = ПорядковыйНомерМинус1.\"ПорядковыйНомерМинус1\" "
+        "GROUP BY ДатыВсехКонвертаций.\"idПользователя\" "  
+    ") AS ЧастотаКонвертаций ON П.\"idПользователя\" = ЧастотаКонвертаций.\"idПользователя\" "  
+    "LEFT JOIN ( "  
+        "SELECT DISTINCT " 
+            "П.\"idПользователя\", "   
+            "COALESCE(LENGTH(Ф.\"Название\"), 0) * 1.0 / "  
+            "GREATEST((SELECT MAX(\"ДлинаФормата\") "   
+             "FROM ( "  
+                 "SELECT " 
+                     "П.\"idПользователя\", "  
+                     "LENGTH(Ф.\"Название\") AS \"ДлинаФормата\" "  
+                 "FROM \"Пользователи\" AS П, \"ИспользованиеФорматов\" AS И, \"ФорматыФайлов\" AS Ф "  
+                 "WHERE П.\"idПользователя\" = И.\"idПользователя\" AND И.\"idФормата\" = Ф.\"idФормата\" "
+                 "GROUP BY П.\"idПользователя\", Ф.\"Название\" "   
+             ") Д " 
+            "), 1) AS \"СамыйИспользуемыйФормат\" " 
+        "FROM \"Пользователи\" AS П "   
+        "LEFT JOIN \"ИспользованиеФорматов\" AS И ON П.\"idПользователя\" = И.\"idПользователя\" "  
+        "LEFT JOIN \"ФорматыФайлов\" AS Ф ON И.\"idФормата\" = Ф.\"idФормата\" "   
+        "GROUP BY П.\"idПользователя\", Ф.\"Название\" "
+    ") AS ДлинаФормата ON П.\"idПользователя\" = ДлинаФормата.\"idПользователя\" "  
+    "LEFT JOIN ( "  
+        "SELECT "  
+            "П.\"idПользователя\", "   
+            "COUNT(И.\"idИсторииКонвертаций\") * 1.0 / "
+            "GREATEST((SELECT MAX(\"СуммаКонвертаций\") "  
+             "FROM ( "  
+                 "SELECT " 
+                     "П.\"idПользователя\", "  
+                     "COUNT(И.\"idИсторииКонвертаций\") AS \"СуммаКонвертаций\" "  
+                 "FROM \"Пользователи\" AS П " 
+                 "LEFT JOIN \"ИсторияКонвертаций\" AS И ON И.\"idПользователя\" = П.\"idПользователя\" "
+                 "GROUP BY П.\"idПользователя\" "   
+             ") О " 
+            "), 1) AS \"СуммаКонвертаций\" "  
+        "FROM \"Пользователи\" AS П "  
+        "LEFT JOIN \"ИсторияКонвертаций\" AS И ON И.\"idПользователя\" = П.\"idПользователя\" " 
+        "GROUP BY П.\"idПользователя\" "
+    ") AS СуммаКонвертаций ON П.\"idПользователя\" = СуммаКонвертаций.\"idПользователя\" "
+    "GROUP BY $1::BIGINT, \"АддКрит\" "
+    "LIMIT 1;";
+
+
+/**
+ *  Are used in request, response jsons
+ */
+enum SQL_OPERATIONS {
+    SQL_SELECT_USER,
+    SQL_INSERT_USER,
+    SQL_SELECT_CONVERTS,
+    SQL_INSERT_CONVERTS
+};
+
+/**
+ *  Connection of server and client.
+ *  Is created, when server accepts new client.
+ *  Receives clients request, sends response and destroys.
+ */
+class Connection
+    : public std::enable_shared_from_this<Connection>
+{
+public:
+    static std::shared_ptr<Connection> create(asio::io_context& io_ctx);
+
+    tcp::socket& socket();
+    std::string& message();
+    void message(std::string str);
+
+    void start();
+
+private:
+    explicit Connection(asio::io_context& io_ctx);
+
+    tcp::socket socket_;
+    std::string message_;
+};
+
+/**
+ *  Server inits loop,
+ *  in which asynchronously accepts new clients Connections.
+ */
+class Server
+{
+public: 
+    explicit Server(const char *db_conn_inf);
+    ~Server();
+
+    void run();
+
+    static const char* DB_CONN_INFO();
+
+private:
+    void start_accept();
+
+    static const char *DB_CONN_INFO_;
+    asio::io_context io_ctx;
+    tcp::acceptor acceptor_;
+};
+
+
+//184
+
+#endif /* KURS_SERVER_HPP */
