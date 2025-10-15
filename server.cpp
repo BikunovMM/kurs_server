@@ -5,8 +5,14 @@ int main (int argc, char *argv[])
 {
     try {
         char db_conn_inf[97];
+        char path_buffer[128];
+        char *dir_index = std::strrchr(argv[0], '\\');
 
-        std::setlocale(LC_ALL, "ru-RU.UTF-8"); // for boost's error_code.message() errors
+        std::setlocale(LC_ALL, "ru-RU.UTF-8"); // for boost's error_code.message() errors        
+        
+        std::strncpy(path_buffer, argv[0], dir_index - argv[0]);
+        printf("path00: %s.\n\n", path_buffer);
+        Server::MAIN_DIR_PATH(path_buffer);
         
         if (argc < 3) {
             std::strcpy(db_conn_inf, "dbname=kurs_db user=admin2006 " 
@@ -25,7 +31,7 @@ int main (int argc, char *argv[])
             printf("Connection info is set: %s", db_conn_inf);
         }
 
-        Server server(std::move(db_conn_inf));
+        Server server(db_conn_inf);
         server.run();
     }
     catch (std::exception& e) {
@@ -89,6 +95,7 @@ puts("86");
             printf("# buffer: ^%s^.\n", buffer);
             boost::json::value   req_str     = boost::json::parse(buffer);      
             boost::json::object  req_json    = req_str.as_object();
+            std::string          img_buff{};
 
             free(buffer);                            
 puts("90");
@@ -107,12 +114,11 @@ puts("102");
             switch (req_json["operation"].as_int64()) {
                 case SQL_SELECT_USER: { /* WHEN USER LOGINS*/
                     const char *params_values[3];
-                    int         rows_len = 0;
 
                     params_values[0] = req_json["login"].as_string().c_str();
                     params_values[1] = req_json["password"].as_string().c_str();
                     
-                    res = PQexecParams(dbconn, SQL_SELECT_USER_REQ, 
+                    res = PQexecParams(dbconn, SELECT_USER_REQ, 
                                     2, nullptr, params_values,
                                     nullptr, nullptr, 0);
                     if (PQresultStatus(res) != PGRES_TUPLES_OK) {
@@ -123,8 +129,7 @@ puts("102");
                         break;
                     }
 
-                    rows_len = PQntuples(res);
-                    if (rows_len == 0) {
+                    if (PQntuples(res) == 0) {
                         res_json["error"] = "No data found!";
                         PQclear(res);
                         break;
@@ -142,6 +147,24 @@ puts("102");
                     break;
                 }
                 case SQL_INSERT_USER: { /* WHEN USER REGISTRATES*/
+                    const char *params_values[3];
+
+                    params_values[0] = req_json["login"].as_string().c_str();
+                    params_values[1] = req_json["password"].as_string().c_str();
+                    params_values[2] = req_json["email"].as_string().c_str(); // can be NULL
+                    params_values[3] = req_json["date"].as_string().c_str();
+
+                    res = PQexecParams(dbconn, INSERT_USER,
+                                       4, nullptr, params_values,
+                                       nullptr, nullptr, 0);
+                    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+                        fprintf(stderr, "! Failed to PQexecParams. Error: %s.\n",
+                            PQresultErrorMessage(res));
+                        res_json["error"] = "Failed to execute request to db.";
+                        PQclear(res);
+                        break;
+                    } 
+
                     break;
                 }
                 case SQL_SELECT_CONVERTS: {
@@ -150,7 +173,6 @@ puts("102");
                 case SQL_INSERT_CONVERTS: { /* AFTER USER_MAKES_CONVERTATION */
                     const char *params_values[7];
                     char        iduser_buff[20];
-                    int         rows_len = 0;
 puts("148");
                     params_values[0] = req_json["infn"].as_string().c_str();
                     params_values[1] = req_json["outfn"].as_string().c_str();
@@ -163,8 +185,9 @@ puts("155");
                     params_values[5] = std::move(iduser_buff);
                     params_values[6] = nullptr;
 puts("1582");
+                    /* NO NEED IN INSERTING NEW CONVERTATIONS_HISTORY VALUES
                     //  INSERT_FILES_IN_DB_AND_GET_IDs
-                    res = PQexecParams(dbconn, SQL_INSERT_INTO_CONVERT_HISTORY, 
+                    res = PQexecParams(dbconn, INSERT_INTO_CONVERT_HISTORY, 
                                        6, nullptr, params_values, nullptr,
                                        nullptr, 0);
                     if (PQresultStatus(res) != PGRES_COMMAND_OK) {
@@ -175,6 +198,7 @@ puts("1582");
                         break;
                     }
                     PQclear(res),
+                    */
 puts("170");                    
                     /*
                      *  GET_ADDITIVNYI_CRITERIY AFTER CONVERTATION
@@ -187,7 +211,7 @@ puts("170");
                     params_values[5] = nullptr;
                     params_values[6] = nullptr;
 
-                    res = PQexecParams(dbconn, SQL_ADDITIVNIY_CRITERIY,
+                    res = PQexecParams(dbconn, GET_ADDITIVNIY_CRITERIY,
                                        1, nullptr, params_values, nullptr,
                                        nullptr, 0);
                     if (PQresultStatus(res) != PGRES_TUPLES_OK) {
@@ -198,24 +222,43 @@ puts("170");
                         break;
                     }
 
-                    rows_len = PQntuples(res);
-                    if (res == 0) {
+                    if (PQntuples(res) == 0) {
                         res_json["error"] = "No data found!";
                         PQclear(res);
                         break;
                     }
 puts("188");
-                    for (int i = 0; i < rows_len; ++i) {
-                        const char *idsuer = PQgetvalue(res, i, 0);
-                        const char *addiv_crit = PQgetvalue(res, i, 1);
-                        const char *summ_add_crit = PQgetvalue(res, i, 2);
+                    double add_krit_percent  = std::strtod(PQgetvalue(res, 0, 0), NULL);
 
-                        printf("id_user: %s, adiv_crit: %s, summ_add_crit: %s.\n",
-                            idsuer, addiv_crit, summ_add_crit);
+                    std::stringstream   ss;
+                    char path_buff[144];                              
+
+                    if (add_krit_percent < 10.0f) {
+                        std::snprintf(path_buff, sizeof(path_buff) * sizeof(char), "%s\\%s", Server::MAIN_DIR_PATH(), IMG00_PATH);                   
+                    }
+                    else if (add_krit_percent < 25.0f) {
+                        std::snprintf(path_buff, sizeof(path_buff) * sizeof(char), "%s\\%s", Server::MAIN_DIR_PATH(), IMG01_PATH);                       
+                    }
+                    else { /* add_krit_percent < 100.0f */
+                        std::snprintf(path_buff, sizeof(path_buff) * sizeof(char), "%s\\%s", Server::MAIN_DIR_PATH(), IMG02_PATH);  
                     }
 
+                    printf("path: %s.\n", path_buff);
+                
+                    std::ifstream ifs(path_buff, std::ios::in | std::ios::binary);                    
+
+                    ss << ifs.rdbuf();
+                    img_buff = ss.str();     
+                    
+                    //std::cout << "img_buf00: " << img_buff << std::endl;
+
+                    printf("percent from add_krit: %f.\n", add_krit_percent);
+                    
+                    res_json["img"] = img_buff.c_str();
+
+                    ifs.close();
                     PQclear(res);
-puts("202");
+
                     break;
                 }
                 default: {
@@ -225,10 +268,18 @@ puts("202");
             }            
 puts("208");
         serialize:       
-            PQfinish(dbconn);         
-            res_str = boost::json::serialize(res_json);
-
+            PQfinish(dbconn);       
+            
+            if (!img_buff.empty()) {
+                res_str = img_buff;
+            }
+            else {
+                res_str = boost::json::serialize(res_json);
+            }
+            
             conn->message(res_str);
+            //std::cout << "img_buf: " << img_buff << std::endl;
+            img_buff = "";
 
             asio::async_write(conn->socket_, asio::buffer(conn->message()), 
                 [conn]
@@ -301,8 +352,15 @@ void Server::start_accept()
 const char* Server::DB_CONN_INFO() {
     return DB_CONN_INFO_;
 }
+const char* Server::MAIN_DIR_PATH() {
+    return MAIN_DIR_PATH_;
+}
+void Server::MAIN_DIR_PATH(const char* str) {
+    MAIN_DIR_PATH_ = str;
+}
 
 const char* Server::DB_CONN_INFO_ = nullptr;
+const char* Server::MAIN_DIR_PATH_ = nullptr;
 
 
 /*
@@ -319,7 +377,7 @@ case SQL_INSERT_CONVERTS: {
                     params_values[4] = nullptr;
 
                     //  INSERT_FILES_IN_DB_AND_GET_IDs
-                    res = PQexecParams(dbconn, SQL_INSERT_FILES_GET_IDS, 2, nullptr,
+                    res = PQexecParams(dbconn, INSERT_FILES_GET_IDS, 2, nullptr,
                                        params_values, nullptr, nullptr, 0);
                     if (PQresultStatus(res) != PGRES_TUPLES_OK) {
                         fprintf(stderr, "! Failed to PQexecParams.\n");
@@ -339,7 +397,7 @@ case SQL_INSERT_CONVERTS: {
                     params_values[1] = PQgetvalue(res, 0, 1).as_string().c_str();
 
                     //  GET_FILES_FORMATS_IDs
-                    res = PQexecParams(dbconn, SQL_SELECT_FILES_FMTS_IDS, 2, nullptr,
+                    res = PQexecParams(dbconn, SELECT_FILES_FMTS_IDS, 2, nullptr,
                                        params_values, nullptr, nullptr, 0);
                     if (PQresultStatus(res) != PGRES_TUPLES_OK) {
                         fprintf(stderr, "! Failed to PQexecParams.\n");
@@ -436,7 +494,7 @@ public:
                         params_values[0] = req_json["login"].as_string().c_str();
                         params_values[1] = req_json["password"].as_string().c_str();
                         
-                        res = PQexecParams(dbconn, SQL_SELECT_USER_REQ, 
+                        res = PQexecParams(dbconn, SELECT_USER_REQ, 
                                         2, nullptr, params_values,
                                         nullptr, nullptr, 0);
                         if (PQresultStatus(res) != PGRES_TUPLES_OK) {

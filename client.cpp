@@ -68,19 +68,24 @@ int main(int argc, char *argv[])
 
                         puts("## request sended to server.");
 
-                        char *buffer = (char*)malloc(184 * sizeof(char));
+                        //std::shared_ptr<boost::asio::streambuf> buffer = std::make_shared<boost::asio::streambuf>();
+
+                        char *buffer = (char*)malloc(152170 * sizeof(char));
                         if (!buffer) {
-                            fprintf(stderr, "! Failed to malloc memory for char *buffer.\n");
+                            fprintf(stderr, "Failed to malloc buffer :0.\n");
                             return;
                         }
 
-                        socket.async_read_some(asio::buffer(buffer, 183 * sizeof(char)), 
+                        asio::async_read(
+                            socket, asio::buffer(buffer, 152169),
+                            asio::transfer_exactly(152169),
                             [buffer]
-                                (const boost::system::error_code& err, size_t bytes)
+                                (const boost::system::error_code& err, size_t bytes) mutable
                             {                                
                                 if (err) {
                                     if (err == asio::error::eof) {
                                         fprintf(stderr, "! Server closed connection.\n");
+                                        free(buffer);
                                         return;
                                     }
                                     fprintf(stderr, 
@@ -89,12 +94,56 @@ int main(int argc, char *argv[])
                                     free(buffer);
                                     return;
                                 }
-                                printf("### received from server: %s.\n"
-                                    "### connection closed.\n", buffer);
+                                printf("### received from server: %lld bytes.\n"
+                                    "### connection closed.\n", bytes);
+                                
+                                
+                                std::ofstream ofs("C:\\Users\\m9337\\Desktop\\img00.jpg", std::ios::out | std::ios::binary);
+                                //ofs << buffer;//data;
+                                ofs.write(buffer, bytes);
 
                                 free(buffer);
+                                //buffer->consume(bytes);
+                                ofs.close();
                             }
                         );
+                        /*
+                        socket.async_read_some(asio::buffer(buffer, 152169),//buffer->prepare(152170), //, 183 * sizeof(char)
+                            [buffer]
+                                (const boost::system::error_code& err, size_t bytes) mutable
+                            {                                
+                                if (err) {
+                                    if (err == asio::error::eof) {
+                                        fprintf(stderr, "! Server closed connection.\n");
+                                        free(buffer);
+                                        return;
+                                    }
+                                    fprintf(stderr, 
+                                        "! Failed to async_read_some. error: %s.\n",
+                                        err.message().c_str());
+                                    free(buffer);
+                                    return;
+                                }
+                                printf("### received from server: %lld bytes.\n"
+                                    "### connection closed.\n", bytes);
+                                
+                                //buffer->commit(bytes);
+
+                                //const auto& buffer_data = buffer->data();
+                                //std::string data(
+                                //    boost::asio::buffers_begin(buffer_data),
+                                //    boost::asio::buffers_end(buffer_data)
+                                //);
+                                
+                                std::ofstream ofs("C:\\Users\\m9337\\Desktop\\img00.jpg", std::ios::out | std::ios::binary);
+                                ofs << buffer;//data;
+
+                                free(buffer);
+                                //buffer->consume(bytes);
+                                ofs.close();
+                            }
+                        );
+                        */
                     }
                 );
             }
