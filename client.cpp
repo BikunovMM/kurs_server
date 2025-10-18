@@ -70,6 +70,51 @@ int main(int argc, char *argv[])
 
                         //std::shared_ptr<boost::asio::streambuf> buffer = std::make_shared<boost::asio::streambuf>();
 
+                        char *buffer = (char*)malloc(11 * sizeof(char));
+                        if (!buffer) {
+                            fprintf(stderr, "Failed to malloc buffer :0.\n");
+                            return;
+                        }
+
+                        socket.async_read_some(asio::buffer(buffer, 10), 
+                            [&socket, buffer]
+                                (const boost::system::error_code& err, size_t bytes) mutable
+                            {
+                                if (err) {
+                                    fprintf(stderr, "! Failed to async_read_some.\n");
+                                    free(buffer);
+                                    return;
+                                }
+
+                                const long int size_of_buffer = std::strtol(buffer, nullptr, 10);
+                                buffer = (char*)realloc(buffer, (size_of_buffer + 1) * sizeof(char));
+                                if (!buffer) {
+                                    fprintf(stderr, "Failed to realloc buffer.\n");
+                                    return;
+                                }
+
+                                printf("** going to read %ld bytes.\n", size_of_buffer);
+
+                                asio::async_read(socket, asio::buffer(buffer, size_of_buffer),
+                                    asio::transfer_exactly(size_of_buffer),
+                                    [buffer]
+                                        (const boost::system::error_code& err, size_t bytes) mutable
+                                    {
+                                        if (err) {
+                                            fprintf(stderr, "! Failed to async_read.\n");
+                                            free(buffer);
+                                            return;
+                                        }
+                                        std::ofstream ofs("C:\\Users\\m9337\\Desktop\\img01.jpg", std::ios::out | std::ios::binary);
+                                        ofs.write(buffer, bytes);
+
+                                        free(buffer);
+                                        ofs.close();                                        
+                                    }
+                                );
+                            }
+                        );
+                        /*
                         char *buffer = (char*)malloc(152170 * sizeof(char));
                         if (!buffer) {
                             fprintf(stderr, "Failed to malloc buffer :0.\n");
@@ -107,6 +152,7 @@ int main(int argc, char *argv[])
                                 ofs.close();
                             }
                         );
+                        */
                         /*
                         socket.async_read_some(asio::buffer(buffer, 152169),//buffer->prepare(152170), //, 183 * sizeof(char)
                             [buffer]

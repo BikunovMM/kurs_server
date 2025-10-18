@@ -87,15 +87,16 @@ puts("70");
                 return;
             }
 puts("81");
-            PGconn              *dbconn      = nullptr;
-            PGresult            *res         = nullptr;
+            PGconn              *dbconn        = nullptr;
+            PGresult            *res           = nullptr;
             boost::json::object  res_json;                                            
             std::string          res_str{};        
 puts("86");       
             printf("# buffer: ^%s^.\n", buffer);
-            boost::json::value   req_str     = boost::json::parse(buffer);      
-            boost::json::object  req_json    = req_str.as_object();
-            std::string          img_buff{};
+            boost::json::value   req_str       = boost::json::parse(buffer);      
+            boost::json::object  req_json      = req_str.as_object();
+            char                 *img_buff     = nullptr;
+            int                   img_buff_len = 0;
 
             free(buffer);                            
 puts("90");
@@ -228,9 +229,10 @@ puts("170");
                         break;
                     }
 puts("188");
-                    double add_krit_percent  = std::strtod(PQgetvalue(res, 0, 0), NULL);
+                    double add_krit_percent  = std::strtod(PQgetvalue(res, 0, 0), NULL);                                        
+                    PQclear(res);
 
-                    std::stringstream   ss;
+                    //std::stringstream   ss;
                     char path_buff[144];                              
 
                     if (add_krit_percent < 10.0f) {
@@ -246,18 +248,26 @@ puts("188");
                     printf("path: %s.\n", path_buff);
                 
                     std::ifstream ifs(path_buff, std::ios::in | std::ios::binary);                    
-
-                    ss << ifs.rdbuf();
-                    img_buff = ss.str();     
+                    if (!ifs) {
+                        fprintf(stderr, "! Failed to init std::ifstream.\n");
+                        PQfinish(dbconn);
+                        return;
+                    }
+                    //ss << ifs.rdbuf();
+                    //img_buff = new std::string(ss.str());
                     
-                    //std::cout << "img_buf00: " << img_buff << std::endl;
+                    ifs.seekg(0, ifs.end);
+                    img_buff_len = ifs.tellg();
+                    ifs.seekg(0, ifs.beg);
+
+                    img_buff = (char*)malloc((img_buff_len + 1) * sizeof(char));
+                    ifs.read(img_buff, img_buff_len);
 
                     printf("percent from add_krit: %f.\n", add_krit_percent);
                     
-                    res_json["img"] = img_buff.c_str();
+                    //res_json["img"] = img_buff.c_str();
 
                     ifs.close();
-                    PQclear(res);
 
                     break;
                 }
@@ -270,31 +280,56 @@ puts("208");
         serialize:       
             PQfinish(dbconn);       
             
-            if (!img_buff.empty()) {
-                res_str = img_buff;
-            }
-            else {
-                res_str = boost::json::serialize(res_json);
-            }
-            
-            conn->message(res_str);
-            //std::cout << "img_buf: " << img_buff << std::endl;
-            img_buff = "";
+            if (img_buff) { /* SENDING IMG'S SIZE AND THEN IMG IT SELF*/
+                conn->message(std::to_string(img_buff_len));
 
-            asio::async_write(conn->socket_, asio::buffer(conn->message()), 
-                [conn]
-                    (const boost::system::error_code& err, size_t bytes)
-                {
-                    if (err) {
-                        fprintf(stderr, "! Failed to async_write. Err: %s.\n",
-                            err.message().c_str());
-                        return;
+                asio::async_write(conn->socket_, asio::buffer(conn->message()),
+                    [conn, img_buff, img_buff_len]
+                        (const boost::system::error_code& err, size_t bytes) mutable
+                    {
+                        if (err) {
+                            fprintf(stderr, "! Failed to async_write. Err: %s.\n",
+                                err.message().c_str());
+                            free(img_buff);
+                            return;
+                        }
+
+                        asio::async_write(conn->socket_, asio::buffer(img_buff, img_buff_len),
+                            [conn, img_buff]
+                                (const boost::system::error_code& err, size_t bytes)
+                            {
+                                if (err) {
+                                    fprintf(stderr, "! Failed to async_write. Err: %s.\n",
+                                        err.message().c_str());
+                                    free(img_buff);
+                                    return;
+                                }
+                                free(img_buff);
+                            }
+                        );                            
                     }
-                    printf("### sended to client: \"%s\", "
-                        "%lld bytes.\n# connection closed.\n",
-                        conn->message().c_str(), bytes);
-                }
-            );
+                );
+            }
+            else { /* JUST SOME REQUEST */
+                res_str = boost::json::serialize(res_json);
+
+                conn->message(res_str);
+
+                asio::async_write(conn->socket_, asio::buffer(conn->message()), 
+                    [conn]
+                        (const boost::system::error_code& err, size_t bytes)
+                    {
+                        if (err) {
+                            fprintf(stderr, "! Failed to async_write. Err: %s.\n",
+                                err.message().c_str());
+                            return;
+                        }
+                        printf("### sended to client: \"%s\", "
+                            "%lld bytes.\n# connection closed.\n",
+                            conn->message().c_str(), bytes);
+                    }
+                );
+            }                        
         }
     );               
 }
