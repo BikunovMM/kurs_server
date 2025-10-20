@@ -92,7 +92,9 @@ int main(int argc, char *argv[])
                                     fprintf(stderr, "Failed to realloc buffer.\n");
                                     return;
                                 }
-
+                                //
+                                //
+                                //
                                 printf("** going to read %ld bytes.\n", size_of_buffer);
 
                                 asio::async_read(socket, asio::buffer(buffer, size_of_buffer),

@@ -86,6 +86,8 @@ puts("70");
                 free(buffer);
                 return;
             }
+
+            buffer[bytes] = '\0';
 puts("81");
             PGconn              *dbconn        = nullptr;
             PGresult            *res           = nullptr;
@@ -114,7 +116,7 @@ puts("90");
 puts("102");
             switch (req_json["operation"].as_int64()) {
                 case SQL_SELECT_USER: { /* WHEN USER LOGINS*/
-                    const char *params_values[3];
+                    const char  *params_values[3];
 
                     params_values[0] = req_json["login"].as_string().c_str();
                     params_values[1] = req_json["password"].as_string().c_str();
@@ -131,40 +133,60 @@ puts("102");
                     }
 
                     if (PQntuples(res) == 0) {
+                        res_json["status"] = OP_LOGIN_ERR;
                         res_json["error"] = "No data found!";
                         PQclear(res);
                         break;
-                    }    
+                    }                   
                     
-                    res_json["IdUser"]   = std::strtoll(PQgetvalue(res, 0, 0), nullptr, 10);
-                    res_json["IdRole"]   = std::strtol(PQgetvalue(res, 0, 1), nullptr, 10);
-                    res_json["login"]    = PQgetvalue(res, 0, 2);
-                    res_json["password"] = PQgetvalue(res, 0, 3);
-                    res_json["email"]    = PQgetvalue(res, 0, 4);   //  may be NULL
-                    res_json["date"]     = PQgetvalue(res, 0, 5);
+                    res_json["iduser"] = std::strtoll(PQgetvalue(res, 0, 0), nullptr, 10);
+                    res_json["status"] = OP_OK;
 
                     PQclear(res);
 
                     break;
                 }
                 case SQL_INSERT_USER: { /* WHEN USER REGISTRATES*/
-                    const char *params_values[3];
+                    const char  *params_values[3];
+                    std::time_t  ctime;
+                    std::tm     *ctime_tm = nullptr;
+                    char         cdate[11];
+
+                    puts("SQL_INSERT_USER");
+
+                    ctime    = std::time(nullptr);
+                    ctime_tm = std::localtime(&ctime);
+
+                    snprintf(cdate, sizeof(cdate), "%d-%d-%d",
+                        ctime_tm->tm_year + 1900, ctime_tm->tm_mon + 1, ctime_tm->tm_mday);
 
                     params_values[0] = req_json["login"].as_string().c_str();
                     params_values[1] = req_json["password"].as_string().c_str();
                     params_values[2] = req_json["email"].as_string().c_str(); // can be NULL
-                    params_values[3] = req_json["date"].as_string().c_str();
+                    params_values[3] = cdate;
 
                     res = PQexecParams(dbconn, INSERT_USER,
                                        4, nullptr, params_values,
                                        nullptr, nullptr, 0);
-                    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+                    if (PQresultStatus(res) != PGRES_TUPLES_OK) {
                         fprintf(stderr, "! Failed to PQexecParams. Error: %s.\n",
                             PQresultErrorMessage(res));
+                        res_json["status"] = OP_LOGIN_ERR;
                         res_json["error"] = "Failed to execute request to db.";
                         PQclear(res);
                         break;
                     } 
+
+                    if (PQntuples(res) == 0) {
+                        res_json["status"] = OP_LOGIN_ERR;
+                        res_json["error"] = "No data found!";
+                        PQclear(res);
+                        break;
+                    }
+
+                    res_json["iduser"] = std::strtoll(PQgetvalue(res, 0, 0), nullptr, 10);
+                    res_json["status"]  = OP_OK;
+                    puts("SQL_INSERT_USER is done");
 
                     break;
                 }
@@ -174,19 +196,28 @@ puts("102");
                 case SQL_INSERT_CONVERTS: { /* AFTER USER_MAKES_CONVERTATION */
                     const char *params_values[7];
                     char        iduser_buff[20];
+                    std::time_t  ctime;
+                    std::tm     *ctime_tm = nullptr;
+                    char         cdate[11];
+
+                    ctime    = std::time(nullptr);
+                    ctime_tm = std::localtime(&ctime);
+
+                    snprintf(cdate, sizeof(cdate), "%d-%d-%d",
+                        ctime_tm->tm_year + 1900, ctime_tm->tm_mon + 1, ctime_tm->tm_mday);
 puts("148");
                     params_values[0] = req_json["infn"].as_string().c_str();
                     params_values[1] = req_json["outfn"].as_string().c_str();
 puts("151");                    
-                    params_values[2] = req_json["infmt"].as_string().c_str();
-                    params_values[3] = req_json["outfmt"].as_string().c_str();
-                    params_values[4] = req_json["date"].as_string().c_str();
+                    params_values[2] = std::strrchr(params_values[0], '.') + 1;
+                    params_values[3] = std::strrchr(params_values[1], '.') + 1;
+                    params_values[4] = cdate;
 puts("155");                    
                     std::snprintf(iduser_buff, sizeof(iduser_buff), "%lld", req_json["iduser"].as_int64());
-                    params_values[5] = std::move(iduser_buff);
+                    params_values[5] = iduser_buff;
                     params_values[6] = nullptr;
 puts("1582");
-                    /* NO NEED IN INSERTING NEW CONVERTATIONS_HISTORY VALUES
+
                     //  INSERT_FILES_IN_DB_AND_GET_IDs
                     res = PQexecParams(dbconn, INSERT_INTO_CONVERT_HISTORY, 
                                        6, nullptr, params_values, nullptr,
@@ -199,7 +230,7 @@ puts("1582");
                         break;
                     }
                     PQclear(res),
-                    */
+
 puts("170");                    
                     /*
                      *  GET_ADDITIVNYI_CRITERIY AFTER CONVERTATION
@@ -312,6 +343,8 @@ puts("208");
             }
             else { /* JUST SOME REQUEST */
                 res_str = boost::json::serialize(res_json);
+
+                 puts("write back response");
 
                 conn->message(res_str);
 

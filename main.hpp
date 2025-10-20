@@ -33,7 +33,8 @@ constexpr char *SELECT_USER_REQ = (char*)"SELECT * FROM Пользователи
 constexpr char *INSERT_USER = (char*) "INSERT INTO Пользователи (Логин, Пароль, "
                                           "АдресЭлектроннойПочты, ДатаРегистрации) "
                                           "VALUES ($1::VARCHAR(20), $2::VARCHAR(20), "
-                                          "$3::VARCHAR(20), $4::DATE);";
+                                          "$3::VARCHAR(20), $4::DATE) "
+                                          "RETURNING idПользователя;";
 constexpr char *INSERT_FILES_GET_IDS =  (char*)"INSERT INTO Файлы (НазваниеФайла) "
                                                    "VALUES ($1::VARCHAR(20)), "
                                                    "($2::VARCHAR(20)) "
@@ -240,6 +241,12 @@ enum SQL_OPERATIONS {
     SQL_INSERT_USER,
     SQL_SELECT_CONVERTS,
     SQL_INSERT_CONVERTS
+};
+
+enum OP_STATUS {
+    OP_OK,
+    OP_LOGIN_ERR,
+    OP_PASSWORD_ERR
 };
 
 /**
