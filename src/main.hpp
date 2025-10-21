@@ -21,9 +21,9 @@ using     tcp    = boost::asio::ip::tcp;
 
 constexpr int   PORT = 8765;
 
-constexpr char *IMG00_PATH = (char*)"images\\img00.jpg";//(char*)"images\\text.txt";
-constexpr char *IMG01_PATH = (char*)"images\\img01.jpg";//(char*)"images\\text.txt";
-constexpr char *IMG02_PATH = (char*)"images\\img02.jpg";//(char*)"images\\text.txt";
+constexpr char *IMG00_PATH = (char*)"..\\images\\img00.jpg";//(char*)"images\\text.txt";
+constexpr char *IMG01_PATH = (char*)"..\\images\\img01.jpg";//(char*)"images\\text.txt";
+constexpr char *IMG02_PATH = (char*)"..\\images\\img02.jpg";//(char*)"images\\text.txt";
 
 //char DB_CONN_INFO[75];
 constexpr char *SELECT_USERS    = (char*)"SELECT * FOM Пользователи;";
