@@ -58,7 +58,6 @@ constexpr char *INSERT_INTO_CONVERT_HISTORY = (char*)
         "SELECT "
         "i.\"idФайла\" + 1, $2 "
         "FROM infile i "
-        //"VALUES ($2) "
         "RETURNING \"idФайла\""
     "), "
     "infile_fmt AS ("
