@@ -1,7 +1,6 @@
 #ifndef KURS_SERVER_HPP
 #define KURS_SERVER_HPP
 
-#include <iostream>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -9,23 +8,29 @@
 #include <chrono>
 #include <ctime>
 #include <fstream>
-#include <sstream>
 
 #include <boost/asio.hpp>
 #include <boost/json/src.hpp>
 #include <libpq-fe.h>
 
-namespace ip     = boost::asio::ip;
-namespace asio   = boost::asio;
-using     tcp    = boost::asio::ip::tcp;
+namespace ip   = boost::asio::ip;
+namespace asio = boost::asio;
+using     tcp  = boost::asio::ip::tcp;
 
-constexpr int   PORT = 8765;
+constexpr int PORT = 8765;
 
-constexpr char *IMG00_PATH = (char*)"..\\images\\img00.jpg";//(char*)"images\\text.txt";
-constexpr char *IMG01_PATH = (char*)"..\\images\\img01.jpg";//(char*)"images\\text.txt";
-constexpr char *IMG02_PATH = (char*)"..\\images\\img02.jpg";//(char*)"images\\text.txt";
+#ifdef _WIN32
+    #define OS_SEPERATOR "\\"
+    #define OS_SEPERATOR_CHR '\\'
+#else
+    #define OS_SEPERATOR "/"
+    #define OS_SEPERATOR_CHR '/'
+#endif
 
-//char DB_CONN_INFO[75];
+constexpr char *IMG00_PATH = (char*)"images" OS_SEPERATOR "img00.jpg";
+constexpr char *IMG01_PATH = (char*)"images" OS_SEPERATOR "img01.jpg";
+constexpr char *IMG02_PATH = (char*)"images" OS_SEPERATOR "img02.jpg";
+
 constexpr char *SELECT_USERS    = (char*)"SELECT * FOM Пользователи;";
 constexpr char *SELECT_USER_REQ = (char*)"SELECT * FROM Пользователи "
                                              "WHERE Логин = $1::VARCHAR(20) "
@@ -226,9 +231,6 @@ constexpr char *GET_ADDITIVNIY_CRITERIY = (char*)
         ") AS СуммаКонвертаций ON П.\"idПользователя\" = СуммаКонвертаций.\"idПользователя\" "
         ")"
     "SELECT "
-        //"\"idПользователя\", "
-        //"АддКрит.\"АддКрит\", "
-        //"(SELECT SUM(АддКрит.\"АддКрит\") FROM АддКрит) AS СуммАддКрит "
         "ROUND(АддКрит.\"АддКрит\" * 100 / (SELECT SUM(АддКрит.\"АддКрит\") FROM АддКрит), 4)"
     "FROM АддКрит "
     "WHERE \"idПользователя\" = $1::BIGINT;";
@@ -298,8 +300,5 @@ private:
     asio::io_context io_ctx;
     tcp::acceptor acceptor_;
 };
-
-
-//184
 
 #endif /* KURS_SERVER_HPP */
